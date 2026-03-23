@@ -42,8 +42,17 @@ const elements = {
     settingsModal: $('#settingsModal'),
     closeSettings: $('#closeSettings'),
     fontSizeSelect: $('#fontSizeSelect'),
-    clearAllBtn: $('#clearAllBtn')
+    clearAllBtn: $('#clearAllBtn'),
+    imageUpload: $('#imageUpload'),
+    attachBtn: $('#attachBtn'),
+    imagePreviewArea: $('#imagePreviewArea'),
+    previewImage: $('#previewImage'),
+    editImageBtn: $('#editImageBtn'),
+    removeImageBtn: $('#removeImageBtn')
 };
+
+// Current attached image data
+let pendingImageData = null;
 
 // ========================================
 // AI Response Engine
@@ -201,6 +210,15 @@ La cybersécurité est l'affaire de tous ! Voulez-vous approfondir un aspect en 
         return this.pickRandom(this.responses.default);
     },
 
+    getImageResponse(text) {
+        const responses = [
+            "J'ai bien reçu votre image ! Vous pouvez la modifier en cliquant dessus ou en utilisant le bouton **Modifier** sous l'image.\n\n**Outils disponibles dans l'éditeur :**\n- Rotation et miroir\n- Recadrage\n- Dessin libre\n- Ajout de texte\n- Filtres (luminosité, contraste, saturation, flou, sépia, niveaux de gris)\n- Redimensionnement\n- Téléchargement de l'image modifiée",
+            "Belle image ! Saviez-vous que vous pouvez la modifier directement ?\n\nCliquez sur l'image ou sur **Modifier** pour ouvrir l'éditeur intégré. Vous pourrez :\n- **Recadrer** la zone qui vous intéresse\n- **Appliquer des filtres** artistiques\n- **Dessiner** par-dessus\n- **Ajouter du texte**\n- **Redimensionner** selon vos besoins\n\nEt bien sûr, **télécharger** le résultat !",
+            "Image reçue ! L'éditeur d'images AlexGPT vous permet de la transformer comme vous voulez.\n\nCliquez sur l'image pour l'ouvrir dans l'éditeur. Vous avez accès à tous les outils : rotation, miroir, crop, dessin, texte, filtres et redimensionnement."
+        ];
+        return this.pickRandom(responses);
+    },
+
     pickRandom(arr) {
         return arr[Math.floor(Math.random() * arr.length)];
     }
@@ -276,7 +294,8 @@ function saveConversations() {
 
 async function sendMessage() {
     const text = elements.messageInput.value.trim();
-    if (!text || state.isGenerating) return;
+    const hasImage = !!pendingImageData;
+    if ((!text && !hasImage) || state.isGenerating) return;
 
     // Create conversation if needed
     if (!state.currentConversationId) {
@@ -289,7 +308,8 @@ async function sendMessage() {
     const userMessage = {
         id: generateId(),
         role: 'user',
-        text: text,
+        text: text || (hasImage ? '📷 Image envoyée' : ''),
+        image: pendingImageData || null,
         timestamp: new Date().toISOString()
     };
     conversation.messages.push(userMessage);
@@ -301,6 +321,7 @@ async function sendMessage() {
     appendMessage(userMessage);
     elements.messageInput.value = '';
     elements.messageInput.style.height = 'auto';
+    clearImagePreview();
     updateSendButton();
 
     // Show typing indicator
@@ -309,7 +330,7 @@ async function sendMessage() {
     scrollToBottom();
 
     // Simulate AI response with delay
-    const responseText = AI.getResponse(text);
+    const responseText = hasImage ? AI.getImageResponse(text) : AI.getResponse(text);
     const delay = Math.min(500 + responseText.length * 2, 3000);
 
     await sleep(delay);
@@ -425,21 +446,40 @@ function appendMessage(message, animate = false) {
     const avatarClass = isUser ? 'user' : 'ai';
     const sender = isUser ? 'Vous' : 'AlexGPT';
 
+    const imageHtml = message.image ? `<img class="message-image" src="${message.image}" alt="Image" onclick="window.openImageInEditor(this.src)">` : '';
+
     el.innerHTML = `
         <div class="message-avatar ${avatarClass}">${avatar}</div>
         <div class="message-content">
             <div class="message-sender">${sender}</div>
-            <div class="message-text">${formatMessage(message.text)}</div>
-            ${!isUser ? `
+            ${imageHtml}
+            ${message.text ? `<div class="message-text">${formatMessage(message.text)}</div>` : ''}
             <div class="message-actions">
+                ${!isUser ? `
                 <button class="message-action-btn copy-msg" title="Copier">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
                         <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
                     </svg>
                     Copier
+                </button>` : ''}
+                ${message.image ? `
+                <button class="message-action-btn download-msg-img" title="Télécharger l'image">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                        <polyline points="7 10 12 15 17 10"></polyline>
+                        <line x1="12" y1="15" x2="12" y2="3"></line>
+                    </svg>
+                    Télécharger
                 </button>
-            </div>` : ''}
+                <button class="message-action-btn edit-msg-img" title="Modifier l'image">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                    </svg>
+                    Modifier
+                </button>` : ''}
+            </div>
         </div>
     `;
 
@@ -464,6 +504,25 @@ function appendMessage(message, animate = false) {
                     `;
                 }, 2000);
             });
+        });
+    }
+
+    // Download image button handler
+    const downloadImgBtn = el.querySelector('.download-msg-img');
+    if (downloadImgBtn && message.image) {
+        downloadImgBtn.addEventListener('click', () => {
+            const a = document.createElement('a');
+            a.href = message.image;
+            a.download = 'alexgpt-image-' + Date.now() + '.png';
+            a.click();
+        });
+    }
+
+    // Edit image button handler
+    const editImgBtn = el.querySelector('.edit-msg-img');
+    if (editImgBtn && message.image) {
+        editImgBtn.addEventListener('click', () => {
+            window.openImageInEditor(message.image);
         });
     }
 
@@ -586,8 +645,35 @@ function closeSidebar() {
 }
 
 function updateSendButton() {
-    elements.sendBtn.disabled = !elements.messageInput.value.trim();
+    elements.sendBtn.disabled = !elements.messageInput.value.trim() && !pendingImageData;
 }
+
+function clearImagePreview() {
+    pendingImageData = null;
+    elements.imagePreviewArea.classList.remove('active');
+    elements.previewImage.src = '';
+    elements.imageUpload.value = '';
+    updateSendButton();
+}
+
+function showImagePreview(dataUrl) {
+    pendingImageData = dataUrl;
+    elements.previewImage.src = dataUrl;
+    elements.imagePreviewArea.classList.add('active');
+    updateSendButton();
+}
+
+// Global function to open an image in the editor
+window.openImageInEditor = function(src) {
+    if (window.imageEditor) {
+        window.imageEditor.open(src);
+    }
+};
+
+// Called by image editor when saving
+window.onImageEdited = function(dataUrl) {
+    showImagePreview(dataUrl);
+};
 
 // ========================================
 // Settings
@@ -710,10 +796,75 @@ function init() {
         }
     });
 
+    // Image upload
+    elements.attachBtn.addEventListener('click', () => {
+        elements.imageUpload.click();
+    });
+
+    elements.imageUpload.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (file && file.type.startsWith('image/')) {
+            const reader = new FileReader();
+            reader.onload = (ev) => {
+                showImagePreview(ev.target.result);
+            };
+            reader.readAsDataURL(file);
+        }
+    });
+
+    elements.removeImageBtn.addEventListener('click', clearImagePreview);
+
+    elements.editImageBtn.addEventListener('click', () => {
+        if (pendingImageData && window.imageEditor) {
+            window.imageEditor.open(pendingImageData);
+        }
+    });
+
+    // Drag and drop images
+    const chatMain = document.querySelector('.chat-main');
+    chatMain.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        chatMain.style.outline = '2px dashed var(--accent-color)';
+    });
+    chatMain.addEventListener('dragleave', () => {
+        chatMain.style.outline = 'none';
+    });
+    chatMain.addEventListener('drop', (e) => {
+        e.preventDefault();
+        chatMain.style.outline = 'none';
+        const file = e.dataTransfer.files[0];
+        if (file && file.type.startsWith('image/')) {
+            const reader = new FileReader();
+            reader.onload = (ev) => {
+                showImagePreview(ev.target.result);
+            };
+            reader.readAsDataURL(file);
+        }
+    });
+
+    // Paste images from clipboard
+    document.addEventListener('paste', (e) => {
+        const items = e.clipboardData.items;
+        for (let item of items) {
+            if (item.type.startsWith('image/')) {
+                e.preventDefault();
+                const file = item.getAsFile();
+                const reader = new FileReader();
+                reader.onload = (ev) => {
+                    showImagePreview(ev.target.result);
+                };
+                reader.readAsDataURL(file);
+                break;
+            }
+        }
+    });
+
     // Keyboard shortcut: Escape to close modals
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
             elements.settingsModal.classList.remove('active');
+            const editorModal = document.getElementById('imageEditorModal');
+            if (editorModal) editorModal.classList.remove('active');
             closeSidebar();
         }
     });
